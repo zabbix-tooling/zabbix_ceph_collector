@@ -4,16 +4,10 @@ A zabbix collector daemon for ceph.
 
 # Installation
 
-## Virtualenv
-
-``` 
-sudo apt-get install virtualenv
-echo "source /usr/share/virtualenvwrapper/virtualenvwrapper.sh" >> ~/.bashrc
-```
-
 ## Install Dependencies
 
 ```
+sudo apt-get install virtualenv
 git clone ...
 cd ceph_collector
 virtualenv env --python /usr/bin/python3
