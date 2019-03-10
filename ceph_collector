@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+
+# 
+# Marc Schoechlin <ms@256bit.org>
+# Marc Schoechlin <marc.schoechlin@vico-research.com>
+
+import json
+import subprocess
+import sys
+import os
+import argparse
+import datetime
+import time
+import fcntl
+import socket
+import re
+import glob
+import logging
+from pyzabbix import ZabbixMetric, ZabbixSender
+
+from pprint import pprint, pformat
+
+
+########################################################################################################################
+###
+### HELPERS
+
+def debug_cmd(out, err):
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        logging.debug("STDOUT: >>>%s<<<\n" % out.decode('utf8'))
+        logging.debug("STDERR: >>>%s<<<\n" % err.decode('utf8'))
+
+def execute_cmd(cmd, dryrun=False):
+    logging.debug("=> '%s'" % cmd)
+    if dryrun:
+        return (0, "n/a", "n/a")
+    else:
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        out, err = process.communicate()
+        if process.returncode != 0:
+            logging.error("'%s' FAILED WITH CODE %s" % (cmd, process.returncode))
+            debug_cmd(out, err)
+            sys.exit(1)
+        else:
+            debug_cmd(out, err)
+        return (process.returncode, out.decode('utf8'), err.decode('utf8'))
+
+file_handle = None
+
+def file_is_locked(file_path):
+    global file_handle
+    file_handle = open(file_path, 'w')
+    try:
+        fcntl.lockf(file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return False
+    except IOError:
+        return True
+
+def check_on_leader():
+    (exitcode, out, err) = execute_cmd("ceph daemon mon.%s mon_status" % socket.gethostname())
+    result = json.loads(out)
+    if exitcode == 0 and result['state'] == 'leader':
+        return True
+    return False
+
+
+def get_daemons(daemon_type, regex_filter):
+    os.chdir("/var/run/ceph/")
+    daemons = []
+    for filename in glob.glob("ceph*.asok"):
+         m = re.match(r"^ceph-(.+\.\d+).asok$", filename)
+         if not m:
+            continue
+         daemon_name = m.group(1)
+         m = re.match(regex_filter, daemon_name)
+         if m:
+            daemons.append(daemon_name)
+    return daemons
+
+
+def get_per_osd_stats(stats_to_fetch, regex_filter):
+
+    collected_results = {}
+
+    for ceph_daemon in get_daemons("osd", regex_filter):
+        (exitcode_osd_perfdump, out_osd_perfdump, err_osd_perfdump) = execute_cmd("ceph daemon %s perf dump" % ceph_daemon)
+        osd_perfdump = json.loads(out_osd_perfdump)
+        collected_results.setdefault(ceph_daemon, {})
+        for stat_item in stats_to_fetch:
+            collected_results[ceph_daemon][stat_item] = osd_perfdump['osd'][stat_item]
+
+    return collected_results
+
+def calculate_osd_stats(results_last, results_now, stats_to_fetch):
+    stats = {}
+
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+       logging.debug("results last: " + pformat(results_last))
+       logging.debug("results now: " + pformat(results_now))
+
+    for stat_type in stats_to_fetch:
+        avgcount_node = 0
+        avgsum_node = 0
+        for daemon_name, data in results_now.items():
+           avgcount_osd = data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
+           avgsum_osd = data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
+
+           if avgcount_osd == 0:
+               print("%-5s %-20s %s" % (daemon_name, stat_type, "0"))
+           else:
+               print("%-5s %-20s %s" % (daemon_name, stat_type, (avgsum_osd/avgcount_osd)))
+
+           avgcount_node += data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
+           avgsum_node += data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
+
+
+        if avgcount_node == 0:
+            print("node %-20s %s" % (stat_type, "0"))
+        else:
+            print("node %-20s %s" % (stat_type, (avgsum_node/avgcount_node)))
+    return stats
+
+
+def discover_osds(results):
+
+    zabbix_discovery_keys = 'ceph.osd.discovery'
+    new_osds = False
+    for daemon_name, data in results_now.items():
+        if daemon_name not in discover_osds.daemons:
+            discover_osds.daemons[daemon_name] = { '#NAME' : daemon_name, '#TYPE' : 'hdd' } 
+            new_osds = True
+
+    discovery_seconds_ago = time.time() - discover_osds.last_discovery 
+
+    if new_osds or discovery_seconds_ago > 3600:
+        send_data = []
+        for key, value in discover_osds.daemons.items():
+            send_data.append(value)
+        send_data = { 'data': send_data }
+        send_data = json.dumps(send_data, ensure_ascii=False)
+
+        logging.debug("discovery data for %s : >>>%s<<<" % (zabbix_discovery_keys, send_data))
+
+        packet = [
+          ZabbixMetric(args.zabbix_host, zabbix_discovery_keys, send_data)
+        ]
+        result = ZabbixSender(use_config=True).send(packet)
+        discover_osds.last_discovery = time.time()
+
+# function local variables
+discover_osds.daemons = {}
+discover_osds.last_discovery = 0
+
+########################################################################################################################
+###
+### MAIN
+
+parser = argparse.ArgumentParser(
+    description='collect data from ceph environments'
+)
+
+parser.add_argument('--loglevel',
+                    type=str,
+                    nargs='?',
+                    help='the name of the python loglevel',
+                    default="INFO",
+                    )
+
+parser.add_argument(
+    '--dryrun',
+    help='simulation mode',
+    action='store_true',
+)
+
+parser.add_argument(
+    '--quiet',
+    help='Suppress all non error output',
+    action='store_true',
+)
+
+parser.add_argument(
+    '--systemd_output',
+    help='Suppress all non error output',
+    action='store_true',
+)
+
+parser.add_argument('--frequency',
+                    type=int,
+                    nargs='?',
+                    help='seconds',
+                    default=5,
+                    )
+
+parser.add_argument('--filter',
+                    type=str,
+                    nargs='?',
+                    help='regex to match imagenames',
+                    default=".*",
+                    )
+
+parser.add_argument('--zabbix_host',
+                    type=str,
+                    nargs='?',
+                    help='The zabbix host',
+                    default=socket.gethostname()
+                    )
+
+args, pools = parser.parse_known_args()
+
+lockfile = "/tmp/ceph_collector.lock"
+
+if file_is_locked(lockfile):
+    print('ERROR: another instance is running, exiting now')
+    sys.exit(0)
+
+# if not check_on_leader():
+#    print('ERROR: this is not the leader mon')
+#    sys.exit(1)
+
+global_stats = {}
+
+# https://stackoverflow.com/questions/34588421/how-to-log-to-journald-systemd-via-python
+# https://stackoverflow.com/questions/40748156/python3-journal-logging-does-not-show-log-level
+root_logger = logging.getLogger()
+
+root_logger.setLevel(args.loglevel)
+
+stats_to_fetch = ['op_latency', 'op_r_latency', 'op_w_latency', 'op_rw_latency']
+
+if args.systemd_output:
+    root_logger.addHandler(SystemdHandler())
+
+results_last = {}
+results_now = {}
+
+known_daemons = {}
+
+count = 0
+while True:
+    count += 1
+    logging.info("measurement loop %s (%s seconds)" % (count, args.frequency))
+    results_now = get_per_osd_stats(stats_to_fetch, args.filter)
+
+    known_daemons = discover_osds(results_now)
+
+    if len(results_last.keys()) > 0:  
+      stats = calculate_osd_stats(results_last,results_now, stats_to_fetch)
+
+    results_last = results_now
+    time.sleep(args.frequency)
+

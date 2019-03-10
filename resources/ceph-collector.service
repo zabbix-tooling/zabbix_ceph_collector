@@ -1,0 +1,7 @@
+# /etc/systemd/ceph-collector.service
+#
+[Unit]
+Description=Ceph monitoring collector
+
+[Service]
+ExecStart=/usr/local/sbin/ceph__collector
