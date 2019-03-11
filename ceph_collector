@@ -30,6 +30,7 @@ def debug_cmd(out, err):
         logging.debug("STDOUT: >>>%s<<<\n" % out.decode('utf8'))
         logging.debug("STDERR: >>>%s<<<\n" % err.decode('utf8'))
 
+
 def execute_cmd(cmd, dryrun=False):
     logging.debug("=> '%s'" % cmd)
     if dryrun:
@@ -45,7 +46,9 @@ def execute_cmd(cmd, dryrun=False):
             debug_cmd(out, err)
         return (process.returncode, out.decode('utf8'), err.decode('utf8'))
 
+
 file_handle = None
+
 
 def file_is_locked(file_path):
     global file_handle
@@ -55,6 +58,7 @@ def file_is_locked(file_path):
         return False
     except IOError:
         return True
+
 
 def check_on_leader():
     (exitcode, out, err) = execute_cmd("ceph daemon mon.%s mon_status" % socket.gethostname())
@@ -68,18 +72,17 @@ def get_daemons(daemon_type, regex_filter):
     os.chdir("/var/run/ceph/")
     daemons = []
     for filename in glob.glob("ceph*.asok"):
-         m = re.match(r"^ceph-(.+\.\d+).asok$", filename)
-         if not m:
+        m = re.match(r"^ceph-(.+\.\d+).asok$", filename)
+        if not m:
             continue
-         daemon_name = m.group(1)
-         m = re.match(regex_filter, daemon_name)
-         if m:
+        daemon_name = m.group(1)
+        m = re.match(regex_filter, daemon_name)
+        if m:
             daemons.append(daemon_name)
     return daemons
 
 
 def get_per_osd_stats(stats_to_fetch, regex_filter):
-
     collected_results = {}
 
     for ceph_daemon in get_daemons("osd", regex_filter):
@@ -91,61 +94,61 @@ def get_per_osd_stats(stats_to_fetch, regex_filter):
 
     return collected_results
 
+
 def calculate_osd_stats(results_last, results_now, stats_to_fetch):
     stats = {}
 
     if logging.getLogger().isEnabledFor(logging.DEBUG):
-       logging.debug("results last: " + pformat(results_last))
-       logging.debug("results now: " + pformat(results_now))
+        logging.debug("results last: " + pformat(results_last))
+        logging.debug("results now: " + pformat(results_now))
 
     for stat_type in stats_to_fetch:
         avgcount_node = 0
         avgsum_node = 0
         for daemon_name, data in results_now.items():
-           avgcount_osd = data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
-           avgsum_osd = data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
+            avgcount_osd = data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
+            avgsum_osd = data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
 
-           if avgcount_osd == 0:
-               print("%-5s %-20s %s" % (daemon_name, stat_type, "0"))
-           else:
-               print("%-5s %-20s %s" % (daemon_name, stat_type, (avgsum_osd/avgcount_osd)))
+            if avgcount_osd == 0:
+                print("%-5s %-20s %s" % (daemon_name, stat_type, "0"))
+            else:
+                print("%-5s %-20s %s" % (daemon_name, stat_type, (avgsum_osd / avgcount_osd)))
 
-           avgcount_node += data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
-           avgsum_node += data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
-
+            avgcount_node += data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
+            avgsum_node += data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
 
         if avgcount_node == 0:
             print("node %-20s %s" % (stat_type, "0"))
         else:
-            print("node %-20s %s" % (stat_type, (avgsum_node/avgcount_node)))
+            print("node %-20s %s" % (stat_type, (avgsum_node / avgcount_node)))
     return stats
 
 
 def discover_osds(results):
-
     zabbix_discovery_keys = 'ceph.osd.discovery'
     new_osds = False
     for daemon_name, data in results_now.items():
         if daemon_name not in discover_osds.daemons:
-            discover_osds.daemons[daemon_name] = { '#NAME' : daemon_name, '#TYPE' : 'hdd' } 
+            discover_osds.daemons[daemon_name] = {'#NAME': daemon_name, '#TYPE': 'hdd'}
             new_osds = True
 
-    discovery_seconds_ago = time.time() - discover_osds.last_discovery 
+    discovery_seconds_ago = time.time() - discover_osds.last_discovery
 
     if new_osds or discovery_seconds_ago > 3600:
         send_data = []
         for key, value in discover_osds.daemons.items():
             send_data.append(value)
-        send_data = { 'data': send_data }
+        send_data = {'data': send_data}
         send_data = json.dumps(send_data, ensure_ascii=False)
 
         logging.debug("discovery data for %s : >>>%s<<<" % (zabbix_discovery_keys, send_data))
 
         packet = [
-          ZabbixMetric(args.zabbix_host, zabbix_discovery_keys, send_data)
+            ZabbixMetric(args.zabbix_host, zabbix_discovery_keys, send_data)
         ]
         result = ZabbixSender(use_config=True).send(packet)
         discover_osds.last_discovery = time.time()
+
 
 # function local variables
 discover_osds.daemons = {}
@@ -243,9 +246,8 @@ while True:
 
     known_daemons = discover_osds(results_now)
 
-    if len(results_last.keys()) > 0:  
-      stats = calculate_osd_stats(results_last,results_now, stats_to_fetch)
+    if len(results_last.keys()) > 0:
+        stats = calculate_osd_stats(results_last, results_now, stats_to_fetch)
 
     results_last = results_now
     time.sleep(args.frequency)
-
