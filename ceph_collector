@@ -102,6 +102,8 @@ def calculate_osd_stats(results_last, results_now, stats_to_fetch):
         logging.debug("results last: " + pformat(results_last))
         logging.debug("results now: " + pformat(results_now))
 
+    metrics = list()
+
     for stat_type in stats_to_fetch:
         avgcount_node = 0
         avgsum_node = 0
@@ -111,16 +113,30 @@ def calculate_osd_stats(results_last, results_now, stats_to_fetch):
 
             if avgcount_osd == 0:
                 print("%-5s %-20s %s" % (daemon_name, stat_type, "0"))
+                metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % (daemon_name, stat_type), "0"))
             else:
-                print("%-5s %-20s %s" % (daemon_name, stat_type, (avgsum_osd / avgcount_osd)))
+                calc = float(avgsum_osd / avgcount_osd)
+                print("%-5s %-20s %s" % (daemon_name, stat_type, calc))
+                metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % (daemon_name, stat_type), calc))
 
             avgcount_node += data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
             avgsum_node += data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
 
         if avgcount_node == 0:
-            print("node %-20s %s" % (stat_type, "0"))
+            print("node   %-20s %s" % (stat_type, "0"))
+            metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % ("node", stat_type), "0"))
         else:
-            print("node %-20s %s" % (stat_type, (avgsum_node / avgcount_node)))
+            calc = float((avgsum_node / avgcount_node))
+            print("node   %-20s %s" % (stat_type, calc))
+            metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % ("node", stat_type), calc))
+
+    result = ZabbixSender(use_config=True).send(metrics)
+    if result.failed > 0:
+         logging.error("failed to send %s of %s measures" % (result.failed,len(metrics)))
+    else:
+         logging.info("successfully sent %s measures" % len(metrics))
+
+
     return stats
 
 
@@ -129,15 +145,18 @@ def discover_osds(results):
     new_osds = False
     for daemon_name, data in results_now.items():
         if daemon_name not in discover_osds.daemons:
-            discover_osds.daemons[daemon_name] = {'#NAME': daemon_name, '#TYPE': 'hdd'}
+            discover_osds.daemons[daemon_name] = {'{#OSD}': daemon_name, '{#DEVICECLASS}': 'hdd'}
             new_osds = True
 
+    discover_osds.daemons["node"] = {'{#OSD}': "node", '{#DEVICECLASS}': 'all'}
     discovery_seconds_ago = time.time() - discover_osds.last_discovery
 
     if new_osds or discovery_seconds_ago > 3600:
         send_data = []
         for key, value in discover_osds.daemons.items():
             send_data.append(value)
+
+        nr_devices = len(send_data)
         send_data = {'data': send_data}
         send_data = json.dumps(send_data, ensure_ascii=False)
 
@@ -147,6 +166,11 @@ def discover_osds(results):
             ZabbixMetric(args.zabbix_host, zabbix_discovery_keys, send_data)
         ]
         result = ZabbixSender(use_config=True).send(packet)
+        if result.failed > 0:
+             logging.error("failed to send discovery for %s devices" % nr_devices)
+        else:
+             logging.info("successfully sent discovery for %s devices" % nr_devices)
+
         discover_osds.last_discovery = time.time()
 
 
@@ -191,7 +215,7 @@ parser.add_argument('--frequency',
                     type=int,
                     nargs='?',
                     help='seconds',
-                    default=5,
+                    default=120,
                     )
 
 parser.add_argument('--filter',
@@ -248,6 +272,5 @@ while True:
 
     if len(results_last.keys()) > 0:
         stats = calculate_osd_stats(results_last, results_now, stats_to_fetch)
-
     results_last = results_now
     time.sleep(args.frequency)
