@@ -220,12 +220,6 @@ parser.add_argument(
     action='store_true',
 )
 
-parser.add_argument(
-    '--systemd_output',
-    help='Suppress all non error output',
-    action='store_true',
-)
-
 parser.add_argument('--frequency',
                     type=int,
                     nargs='?',
@@ -269,23 +263,25 @@ root_logger.setLevel(args.loglevel)
 
 stats_to_fetch = ['op_latency', 'op_r_latency', 'op_w_latency', 'op_rw_latency']
 
-if args.systemd_output:
-    root_logger.addHandler(SystemdHandler())
-
 results_last = {}
 results_now = {}
 
 known_daemons = {}
 
 count = 0
-while True:
-    count += 1
-    logging.info("measurement loop %s (%s seconds)" % (count, args.frequency))
-    results_now = get_per_osd_stats(stats_to_fetch, args.filter)
 
-    known_daemons = discover_osds(results_now)
+try:
+   while True:
+       count += 1
+       logging.info("measurement loop %s (%s seconds)" % (count, args.frequency))
+       results_now = get_per_osd_stats(stats_to_fetch, args.filter)
 
-    if len(results_last.keys()) > 0:
-        stats = calculate_osd_stats(results_last, results_now, stats_to_fetch)
-    results_last = results_now
-    time.sleep(args.frequency)
+       known_daemons = discover_osds(results_now)
+
+       if len(results_last.keys()) > 0:
+           stats = calculate_osd_stats(results_last, results_now, stats_to_fetch)
+       results_last = results_now
+       time.sleep(args.frequency)
+except KeyboardInterrupt:
+   logging.info("request for termination, exiting")
+   sys.exit(1)
