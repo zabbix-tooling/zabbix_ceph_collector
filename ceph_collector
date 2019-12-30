@@ -135,17 +135,38 @@ def calculate_osd_stats(results_last, results_now, stats_to_fetch):
          logging.error("failed to send %s of %s measures" % (result.failed,len(metrics)))
     else:
          logging.info("successfully sent %s measures" % len(metrics))
-
-
     return stats
 
+def get_osd_details(osd):
+   ret = { 
+      "type": "unknown",
+      "device": "unknown" 
+   }
+
+   (exitcode, out, err) = execute_cmd("lsblk --json --output KNAME,ROTA,MOUNTPOINT,PKNAME")
+   result = json.loads(out)
+   if exitcode != 0:
+      logging.error("unable to get device type for %s")
+      return ret
+
+   dev_path = re.sub(r"^osd.(\d+)$", r"/var/lib/ceph/osd/ceph-\1", osd)
+   for dev_data in result['blockdevices']:
+      if dev_data['mountpoint'] == dev_path:
+         ret['device'] = "/dev/" + dev_data['pkname']
+         if dev_data['rota'] == "1":
+            ret['type'] = 'hdd'
+         else: 
+            ret['type'] = 'ssd'
+         break
+   return ret
 
 def discover_osds(results):
     zabbix_discovery_keys = 'ceph.osd.discovery'
     new_osds = False
     for daemon_name, data in results_now.items():
         if daemon_name not in discover_osds.daemons:
-            discover_osds.daemons[daemon_name] = {'{#OSD}': daemon_name, '{#DEVICECLASS}': 'hdd'}
+            osd_type = get_osd_details(daemon_name)['type']
+            discover_osds.daemons[daemon_name] = {'{#OSD}': daemon_name, '{#DEVICECLASS}': osd_type}
             new_osds = True
 
     discover_osds.daemons["node"] = {'{#OSD}': "node", '{#DEVICECLASS}': 'all'}
@@ -196,12 +217,6 @@ parser.add_argument('--loglevel',
 parser.add_argument(
     '--dryrun',
     help='simulation mode',
-    action='store_true',
-)
-
-parser.add_argument(
-    '--quiet',
-    help='Suppress all non error output',
     action='store_true',
 )
 
