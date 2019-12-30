@@ -112,22 +112,22 @@ def calculate_osd_stats(results_last, results_now, stats_to_fetch):
             avgsum_osd = data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
 
             if avgcount_osd == 0:
-                print("%-5s %-20s %s" % (daemon_name, stat_type, "0"))
+                logging.info("%-5s %-20s %s" % (daemon_name, stat_type, "0"))
                 metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % (daemon_name, stat_type), "0"))
             else:
                 calc = float(avgsum_osd / avgcount_osd)
-                print("%-5s %-20s %s" % (daemon_name, stat_type, calc))
+                logging.info("%-5s %-20s %s" % (daemon_name, stat_type, calc))
                 metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % (daemon_name, stat_type), calc))
 
             avgcount_node += data[stat_type]["avgcount"] - results_last[daemon_name][stat_type]["avgcount"]
             avgsum_node += data[stat_type]["sum"] - results_last[daemon_name][stat_type]["sum"]
 
         if avgcount_node == 0:
-            print("node   %-20s %s" % (stat_type, "0"))
+            logging.info("node   %-20s %s" % (stat_type, "0"))
             metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % ("node", stat_type), "0"))
         else:
             calc = float((avgsum_node / avgcount_node))
-            print("node   %-20s %s" % (stat_type, calc))
+            logging.info("node   %-20s %s" % (stat_type, calc))
             metrics.append(ZabbixMetric(args.zabbix_host, "osd_stat[%s,%s]" % ("node", stat_type), calc))
 
     result = ZabbixSender(use_config=True).send(metrics)
