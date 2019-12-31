@@ -21,6 +21,7 @@ class OsdStats():
         self.args = args
         self.daemons = {}
         self.results_now = {}
+        self.results_last = {}
         self.last_discovery = 0
         self.stats_to_fetch = ['op_latency', 'op_r_latency', 'op_w_latency', 'op_rw_latency']
 
@@ -37,21 +38,21 @@ class OsdStats():
         self.results_now = collected_results
         return collected_results
 
-    def discover(self, results):
+    def discover(self):
         zabbix_discovery_keys = 'ceph.osd.discovery'
         new_osds = False
         for daemon_name, data in self.results_now.items():
-            if daemon_name not in self.discover_osds.daemons:
+            if daemon_name not in self.daemons:
                 osd_type = OsdStats.get_osd_details(daemon_name)['type']
-                self.discover_osds.daemons[daemon_name] = {'{#OSD}': daemon_name, '{#DEVICECLASS}': osd_type}
+                self.daemons[daemon_name] = {'{#OSD}': daemon_name, '{#DEVICECLASS}': osd_type}
                 new_osds = True
 
-        self.discover_osds.daemons["node"] = {'{#OSD}': "node", '{#DEVICECLASS}': 'all'}
-        discovery_seconds_ago = time.time() - self.discover_osds.last_discovery
+        self.daemons["node"] = {'{#OSD}': "node", '{#DEVICECLASS}': 'all'}
+        discovery_seconds_ago = time.time() - self.last_discovery
 
         if new_osds or discovery_seconds_ago > self.args.discovery_deadline:
             send_data = []
-            for key, value in self.discover_osds.daemons.items():
+            for key, value in self.daemons.items():
                 send_data.append(value)
 
             nr_devices = len(send_data)
@@ -69,7 +70,7 @@ class OsdStats():
             else:
                 logging.info("successfully sent discovery for %s devices" % nr_devices)
 
-            self.discover_osds.last_discovery = time.time()
+            self.last_discovery = time.time()
 
     def process(self):
         stats = {}
@@ -117,7 +118,8 @@ class OsdStats():
     def collect(self):
         self.get_stats()
         self.discover()
-        self.process()
+        if len(self.results_last.keys()) > 0:
+          self.process()
         self.results_last = self.results_now
         time.sleep(self.args.frequency)
 

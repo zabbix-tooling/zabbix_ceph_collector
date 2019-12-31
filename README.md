@@ -8,17 +8,19 @@ A zabbix collector daemon for ceph.
 
 ```
 sudo apt-get install virtualenv
-cd /opt
+INSTALLDIR="$PWD"
+INSTALLDIR="/opt"
+cd $INSTALLDIR
 git clone https://github.com/vico-research-and-consulting/zabbix_ceph_collector.git
-cd /opt/zabbix_ceph_collector
-virtualenv /opt/zabbix_ceph_collector/env --python /usr/bin/python3
-source env/bin/activate
-pip install -Ur requirements.txt
+virtualenv $INSTALLDIR/zabbix_ceph_collector/env --python /usr/bin/python3
+source $INSTALLDIR/zabbix_ceph_collector/env/bin/activate
+pip install -Ur $INSTALLDIR/zabbix_ceph_collector/requirements.txt
 ```
 
 ## Run manually
 
 ```
+cd $INSTALLDIR/zabbix_ceph_collector/
 source env/bin/activate
 ./ceph_collector --help
 ./ceph_collector
@@ -27,7 +29,7 @@ source env/bin/activate
 ## Configure service
 
 ```
-cp ceph_collector.service /etc/systemd/system/ceph_collector.service
+cp $INSTALLDIR/zabbix_ceph_collector/ceph_collector.service /etc/systemd/system/ceph_collector.service
 chown root:root /etc/systemd/system/ceph_collector.service
 systemctl daemon-reload
 systemctl enable ceph_collector.service
